@@ -159,7 +159,7 @@ Production environment variables must be configured in the Render dashboard. Nev
 
 ## Author
 
-**Afia A.**
+**Afia Mubassira**
 
 - [GitHub](https://github.com/afiaafia)
 - [LinkedIn](https://linkedin.com/in/afia-afia)
