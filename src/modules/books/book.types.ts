@@ -2,6 +2,7 @@ import type { ObjectId } from 'mongodb';
 
 export const BOOK_CATEGORIES = [
   'Fiction',
+  'Romance',
   'Science',
   'History',
   'Kids',

@@ -1,7 +1,13 @@
 import type { Book, BookCategory } from '../src/modules/books/book.types.js';
 
 const SEARCH_URL = 'https://openlibrary.org/search.json';
-const SUBJECTS_URL = 'https://openlibrary.org/subjects/fiction.json';
+const SUBJECT_ENDPOINTS = [
+  { subject: 'fiction', category: 'Fiction' },
+  { subject: 'romance', category: 'Romance' },
+  { subject: 'science', category: 'Science' },
+  { subject: 'history', category: 'History' },
+  { subject: 'juvenile_fiction', category: 'Kids' },
+] as const;
 const RESULT_LIMIT = 25;
 const FALLBACK_COVER = 'https://placehold.co/300x450?text=Cover+Unavailable';
 const MAX_ATTEMPTS = 3;
@@ -153,20 +159,44 @@ function mapSubjectWorks(works: OpenLibrarySubjectWork[]): OpenLibraryDoc[] {
   }));
 }
 
-function categoryFromSubjects(subjects: string[]): BookCategory {
+function categoryFromSubjects(
+  subjects: string[],
+  fallback: BookCategory = 'Others'
+): BookCategory {
   const text = subjects.join(' ').toLowerCase();
-  if (/juvenile|children|young adult|picture books/.test(text)) return 'Kids';
-  if (/science|physics|biology|chemistry|mathematics|technology/.test(text)) {
-    return 'Science';
+
+  if (/juvenile|children|young adult|picture books/.test(text)) {
+    return 'Kids';
   }
-  if (/history|historical/.test(text)) return 'History';
-  if (/fiction|novel|fantasy|mystery|romance|science fiction/.test(text)) {
+
+  if (/romance|romantic|love stories|love story/.test(text)) {
+    return 'Romance';
+  }
+
+  // Science fiction is a fiction genre, not a science subject.
+  if (/science fiction|sci-fi/.test(text)) {
     return 'Fiction';
   }
-  return 'Others';
+
+  if (/history|historical|biography|autobiography/.test(text)) {
+    return 'History';
+  }
+
+  if (/physics|biology|chemistry|mathematics|technology|science/.test(text)) {
+    return 'Science';
+  }
+
+  if (/fiction|novel|fantasy|mystery|thriller|drama|tragedy/.test(text)) {
+    return 'Fiction';
+  }
+
+  return fallback;
 }
 
-export function mapOpenLibraryDocs(docs: OpenLibraryDoc[]): SeedBook[] {
+export function mapOpenLibraryDocs(
+  docs: OpenLibraryDoc[],
+  fallbackCategory: BookCategory = 'Others'
+): SeedBook[] {
   const booksByKey = new Map<string, SeedBook>();
 
   for (const doc of docs) {
@@ -212,7 +242,7 @@ export function mapOpenLibraryDocs(docs: OpenLibraryDoc[]): SeedBook[] {
     booksByKey.set(doc.key, {
       title,
       author,
-      category: categoryFromSubjects(subjects),
+      category: categoryFromSubjects(subjects, fallbackCategory),
       image: coverId
         ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
         : FALLBACK_COVER,
@@ -239,6 +269,7 @@ export async function fetchOpenLibraryBooks(
   const userAgent = contact
     ? `BookNook/1.0 (Open Library catalog seed; contact: ${contact})`
     : 'BookNook/1.0 (Open Library catalog seed)';
+
   const requestOptions: Required<FetchOpenLibraryOptions> & {
     headers: HeadersInit;
   } = {
@@ -255,72 +286,85 @@ export async function fetchOpenLibraryBooks(
     },
   };
 
-  const searchUrl = new URL(SEARCH_URL);
-  searchUrl.searchParams.set('q', 'fiction');
-  searchUrl.searchParams.set('limit', String(RESULT_LIMIT));
-  searchUrl.searchParams.set(
-    'fields',
-    'key,title,author_name,cover_i,first_publish_year,subject'
-  );
+  const results = await Promise.all(
+    SUBJECT_ENDPOINTS.map(async ({ subject, category }) => {
+      const url = new URL(`https://openlibrary.org/subjects/${subject}.json`);
+      url.searchParams.set('limit', String(RESULT_LIMIT));
 
-  try {
-    const response = await fetchWithRetry(
-      searchUrl,
-      'Search API',
-      fetchImpl,
-      requestOptions
-    );
-    const payload = await readJson<OpenLibraryResponse>(response, 'Search API');
-    if (!Array.isArray(payload.docs)) {
-      throw new Error('Open Library Search API returned an invalid response');
-    }
-
-    return mapOpenLibraryDocs(payload.docs).slice(0, RESULT_LIMIT);
-  } catch (error) {
-    if (!(error instanceof OpenLibraryRequestError) || !error.retryable) {
-      throw error;
-    }
-
-    const subjectsUrl = new URL(SUBJECTS_URL);
-    subjectsUrl.searchParams.set('limit', String(RESULT_LIMIT));
-    try {
       const response = await fetchWithRetry(
-        subjectsUrl,
-        'Subjects API fallback',
+        url,
+        `${subject} Subjects API`,
         fetchImpl,
         requestOptions
       );
+
       const payload = await readJson<OpenLibrarySubjectsResponse>(
         response,
-        'Subjects API fallback'
+        `${subject} Subjects API`
       );
+
       if (!Array.isArray(payload.works)) {
         throw new Error(
-          'Open Library Subjects API returned an invalid response'
+          `Open Library ${subject} Subjects API returned an invalid response`
         );
       }
 
-      return mapOpenLibraryDocs(mapSubjectWorks(payload.works)).slice(
-        0,
-        RESULT_LIMIT
-      );
-    } catch (fallbackError) {
-      throw new Error(
-        `Open Library Search API failed (${errorMessage(error)}); Subjects API fallback failed (${errorMessage(fallbackError)})`,
-        { cause: fallbackError }
-      );
+      return mapOpenLibraryDocs(mapSubjectWorks(payload.works), category);
+    })
+  );
+
+  const booksByKey = new Map<string, SeedBook>();
+
+  for (const books of results) {
+    for (const book of books) {
+      const key = book.openLibraryKey;
+
+      if (!key) continue;
+
+      if (!booksByKey.has(key)) {
+        booksByKey.set(key, book);
+      }
     }
   }
+
+  return [...booksByKey.values()];
 }
 
 export function createOpenLibraryUpsertOperations(books: SeedBook[]) {
-  return books.map((book) => ({
-    updateOne: {
-      filter: { openLibraryKey: book.openLibraryKey },
-      update: { $setOnInsert: book },
-      upsert: true,
-    },
-  }));
+  return books.flatMap((book) => {
+    const {
+      totalCopies,
+      availableCopies,
+      addedBy,
+      createdAt,
+      ...metadata
+    } = book;
+
+    return [
+      {
+        updateOne: {
+          filter: { openLibraryKey: book.openLibraryKey },
+          update: { $setOnInsert: book },
+          upsert: true,
+        },
+      },
+      {
+        updateOne: {
+          filter: {
+            openLibraryKey: book.openLibraryKey,
+            'addedBy.userId': CATALOG_USER.userId,
+          },
+          update: {
+            $set: {
+              ...metadata,
+              updatedAt: new Date(),
+            },
+          },
+          upsert: false,
+        },
+      },
+    ];
+  });
 }
 
 export function assertLoopbackMongoUri(uri: string): void {
@@ -443,7 +487,7 @@ async function applySeed(books: SeedBook[]): Promise<void> {
 
     const result = await getCollections().books.bulkWrite(
       createOpenLibraryUpsertOperations(books),
-      { ordered: false }
+      { ordered: true }
     );
 
     console.log(

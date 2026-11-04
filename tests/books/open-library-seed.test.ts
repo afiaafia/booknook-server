@@ -9,12 +9,39 @@ import {
   mapOpenLibraryDocs,
 } from '../../scripts/seed-open-library.js';
 
-function searchResponse(docs: unknown[]) {
-  return new Response(JSON.stringify({ docs }), {
+function subjectsResponse(works: unknown[]) {
+  return new Response(JSON.stringify({ works }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+const categoryWorks = {
+  fiction: [{
+    key: '/works/OL101W',
+    title: 'The Fiction Book',
+    authors: [{ name: 'Fiction Author' }],
+    subject: ['novels', 'fiction'],
+  }],
+  science: [{
+    key: '/works/OL102W',
+    title: 'The Science Book',
+    authors: [{ name: 'Science Author' }],
+    subject: ['physics', 'science'],
+  }],
+  history: [{
+    key: '/works/OL103W',
+    title: 'The History Book',
+    authors: [{ name: 'History Author' }],
+    subject: ['history'],
+  }],
+  juvenile_fiction: [{
+    key: '/works/OL104W',
+    title: 'The Kids Book',
+    authors: [{ name: 'Kids Author' }],
+    subject: ['juvenile fiction', 'children'],
+  }],
+};
 
 describe('Open Library seed mapping', () => {
   it('only allows a single loopback MongoDB host for explicit writes', () => {
@@ -61,7 +88,7 @@ describe('Open Library seed mapping', () => {
     );
   });
 
-  it('maps works to the existing Book shape and marks them as catalogue books', () => {
+  it('maps works to the Book shape and marks them as catalogue books', () => {
     const [book] = mapOpenLibraryDocs([
       {
         key: '/works/OL123W',
@@ -83,14 +110,9 @@ describe('Open Library seed mapping', () => {
     assert.match(book.description, /First published in 2001/);
   });
 
-  it('uses a fallback cover and ignores duplicate or invalid work keys', () => {
+  it('uses a fallback cover and ignores invalid work keys', () => {
     const books = mapOpenLibraryDocs([
       { key: '/works/OL456W', title: 'No Cover', author_name: ['Reader'] },
-      {
-        key: '/works/OL456W',
-        title: 'No Cover (duplicate)',
-        author_name: ['Reader'],
-      },
       { key: '/books/OL789M', title: 'Not a work key' },
     ]);
 
@@ -101,67 +123,114 @@ describe('Open Library seed mapping', () => {
     );
   });
 
-  it('uses an idempotent set-on-insert upsert keyed by Open Library work', () => {
+  it('creates safe insert and catalogue-only metadata update operations', () => {
     const [book] = mapOpenLibraryDocs([
-      { key: '/works/OL123W', title: 'The Seeded Story' },
+      {
+        key: '/works/OL123W',
+        title: 'The Seeded Story',
+        subject: ['fiction'],
+      },
     ]);
+
     assert.ok(book);
 
-    const [operation] = createOpenLibraryUpsertOperations([book]);
-    assert.ok(operation);
-    assert.deepEqual(operation.updateOne.filter, {
+    const operations = createOpenLibraryUpsertOperations([book]);
+
+    assert.equal(operations.length, 2);
+
+    assert.deepEqual(operations[0]?.updateOne.filter, {
       openLibraryKey: '/works/OL123W',
     });
-    assert.equal(operation.updateOne.upsert, true);
-    assert.deepEqual(operation.updateOne.update, { $setOnInsert: book });
+    assert.deepEqual(operations[0]?.updateOne.update, {
+      $setOnInsert: book,
+    });
+    assert.equal(operations[0]?.updateOne.upsert, true);
+
+    const update = operations[1]?.updateOne;
+    assert.deepEqual(update?.filter, {
+      openLibraryKey: '/works/OL123W',
+      'addedBy.userId': 'system:openlibrary',
+    });
+    assert.equal(update?.upsert, false);
+
+    const fields = update?.update.$set as Record<string, unknown>;
+    assert.equal(fields?.category, 'Fiction');
+    assert.equal(fields?.title, 'The Seeded Story');
+    assert.equal('totalCopies' in fields, false);
+    assert.equal('availableCopies' in fields, false);
+    assert.equal('addedBy' in fields, false);
+    assert.equal('createdAt' in fields, false);
   });
 
-  it('fetches and maps works using the confirmed Search API fields', async () => {
-    let requestUrl = '';
-    let requestHeaders: Headers | undefined;
-    const fetchImpl: typeof fetch = async (input, init) => {
-      requestUrl = String(input);
-      requestHeaders = new Headers(init?.headers);
-      return searchResponse([
-        {
-          key: '/works/OL123W',
-          title: 'The Seeded Story',
-          author_name: ['A. Writer'],
-          cover_i: 987,
-          first_publish_year: 2001,
-        },
-      ]);
+  it('fetches all four categories and maps their books', async () => {
+    const requestedSubjects: string[] = [];
+
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const subject = url.pathname.split('/').at(-1)?.replace('.json', '');
+
+      assert.ok(subject);
+      requestedSubjects.push(subject);
+
+      return subjectsResponse(
+        categoryWorks[subject as keyof typeof categoryWorks] ?? []
+      );
     };
 
     const books = await fetchOpenLibraryBooks(fetchImpl);
 
-    assert.equal(
-      requestUrl,
-      'https://openlibrary.org/search.json?q=fiction&limit=25&fields=key%2Ctitle%2Cauthor_name%2Ccover_i%2Cfirst_publish_year%2Csubject'
+    assert.deepEqual(requestedSubjects.sort(), [
+      'fiction',
+      'history',
+      'juvenile_fiction',
+      'science',
+    ]);
+
+    assert.equal(books.length, 4);
+
+    const categories = new Map(
+      books.map((book) => [book.openLibraryKey, book.category])
     );
-    assert.equal(requestHeaders?.get('Accept'), 'application/json');
-    assert.equal(
-      requestHeaders?.get('User-Agent'),
-      'BookNook/1.0 (Open Library catalog seed)'
-    );
-    assert.equal(books.length, 1);
-    assert.equal(books[0]?.title, 'The Seeded Story');
-    assert.equal(books[0]?.author, 'A. Writer');
-    assert.equal(
-      books[0]?.image,
-      'https://covers.openlibrary.org/b/id/987-M.jpg'
-    );
-    assert.equal(books[0]?.openLibraryKey, '/works/OL123W');
+
+    assert.equal(categories.get('/works/OL101W'), 'Fiction');
+    assert.equal(categories.get('/works/OL102W'), 'Science');
+    assert.equal(categories.get('/works/OL103W'), 'History');
+    assert.equal(categories.get('/works/OL104W'), 'Kids');
   });
 
-  it('retries temporary Search API failures before returning books', async () => {
-    let calls = 0;
+  it('deduplicates the same Open Library work across subject endpoints', async () => {
+    const sharedWork = {
+      key: '/works/OL200W',
+      title: 'Shared Book',
+      authors: [{ name: 'A. Writer' }],
+      subject: ['fiction'],
+    };
+
+    const fetchImpl: typeof fetch = async () =>
+      subjectsResponse([sharedWork]);
+
+    const books = await fetchOpenLibraryBooks(fetchImpl);
+
+    assert.equal(books.length, 1);
+    assert.equal(books[0]?.openLibraryKey, '/works/OL200W');
+  });
+
+  it('retries temporary subject API failures', async () => {
+    const calls = new Map<string, number>();
     const delays: number[] = [];
-    const fetchImpl: typeof fetch = async () => {
-      calls += 1;
-      return calls === 1
-        ? new Response('temporarily unavailable', { status: 503 })
-        : searchResponse([{ key: '/works/OL123W', title: 'The Seeded Story' }]);
+
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const subject = url.pathname.split('/').at(-1) ?? '';
+      const count = (calls.get(subject) ?? 0) + 1;
+      calls.set(subject, count);
+
+      if (subject === 'science.json' && count === 1) {
+        return new Response('temporarily unavailable', { status: 503 });
+      }
+
+      const key = subject.replace('.json', '') as keyof typeof categoryWorks;
+      return subjectsResponse(categoryWorks[key] ?? []);
     };
 
     const books = await fetchOpenLibraryBooks(fetchImpl, {
@@ -172,68 +241,28 @@ describe('Open Library seed mapping', () => {
       },
     });
 
-    assert.equal(calls, 2);
+    assert.equal(books.length, 4);
+    assert.equal(calls.get('science.json'), 2);
     assert.deepEqual(delays, [125]);
-    assert.equal(books[0]?.openLibraryKey, '/works/OL123W');
   });
 
-  it('uses the Subjects API fallback and maps its response shape', async () => {
-    const requestedUrls: string[] = [];
+  it('reports a subject API failure instead of silently returning partial data', async () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(String(input));
-      requestedUrls.push(url.toString());
-      if (url.pathname === '/search.json') {
-        return new Response('Solr unavailable', { status: 500 });
+
+      if (url.pathname.includes('/science.json')) {
+        return new Response('Science backend unavailable', { status: 502 });
       }
 
-      return new Response(
-        JSON.stringify({
-          works: [
-            {
-              key: '/works/OL66554W',
-              title: 'Pride and Prejudice',
-              authors: [{ name: 'Jane Austen' }],
-              cover_id: 14348537,
-              first_publish_year: 1813,
-              subject: ['Fiction', 'Romance'],
-            },
-          ],
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
+      return subjectsResponse([]);
     };
-
-    const books = await fetchOpenLibraryBooks(fetchImpl, {
-      maxAttempts: 1,
-      sleep: async () => undefined,
-    });
-
-    assert.equal(requestedUrls.length, 2);
-    assert.equal(
-      requestedUrls[1],
-      'https://openlibrary.org/subjects/fiction.json?limit=25'
-    );
-    assert.equal(books[0]?.author, 'Jane Austen');
-    assert.equal(books[0]?.category, 'Fiction');
-    assert.equal(
-      books[0]?.image,
-      'https://covers.openlibrary.org/b/id/14348537-M.jpg'
-    );
-    assert.equal(books[0]?.openLibraryKey, '/works/OL66554W');
-  });
-
-  it('reports both API failures instead of returning an empty catalogue', async () => {
-    const fetchImpl: typeof fetch = async (input) =>
-      new URL(String(input)).pathname === '/search.json'
-        ? new Response('Search backend unavailable', { status: 500 })
-        : new Response('Subjects backend unavailable', { status: 502 });
 
     await assert.rejects(
       fetchOpenLibraryBooks(fetchImpl, {
         maxAttempts: 1,
         sleep: async () => undefined,
       }),
-      /Search API failed \(Open Library Search API returned HTTP 500: Search backend unavailable\); Subjects API fallback failed \(Open Library Subjects API fallback returned HTTP 502: Subjects backend unavailable\)/
+      /Open Library science Subjects API returned HTTP 502/
     );
   });
 });
