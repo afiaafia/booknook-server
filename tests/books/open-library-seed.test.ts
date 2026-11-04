@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  assertAtlasMongoUri,
   assertLoopbackMongoUri,
   createOpenLibraryUpsertOperations,
   fetchOpenLibraryBooks,
@@ -26,6 +27,36 @@ describe('Open Library seed mapping', () => {
     assert.throws(() =>
       assertLoopbackMongoUri(
         'mongodb://localhost:27017,remote.example:27017/booknook'
+      )
+    );
+  });
+
+  it('only allows the approved Atlas cluster and booknook database', () => {
+    assert.doesNotThrow(() =>
+      assertAtlasMongoUri(
+        'mongodb+srv://user:password@cluster0.6rsrqdq.mongodb.net/booknook',
+        'booknook'
+      )
+    );
+
+    assert.throws(() =>
+      assertAtlasMongoUri(
+        'mongodb+srv://user:password@other.mongodb.net/booknook',
+        'booknook'
+      )
+    );
+
+    assert.throws(() =>
+      assertAtlasMongoUri(
+        'mongodb+srv://user:password@cluster0.6rsrqdq.mongodb.net/other',
+        'other'
+      )
+    );
+
+    assert.throws(() =>
+      assertAtlasMongoUri(
+        'mongodb://localhost:27017/booknook',
+        'booknook'
       )
     );
   });

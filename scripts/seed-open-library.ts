@@ -347,37 +347,110 @@ export function assertLoopbackMongoUri(uri: string): void {
   }
 }
 
-async function applySeed(books: SeedBook[]): Promise<void> {
-  if (process.env.BOOKNOOK_SEED_CONFIRM !== 'local-database-write') {
-    throw new Error(
-      'Set BOOKNOOK_SEED_CONFIRM=local-database-write to confirm an isolated local database write'
-    );
+
+export function assertAtlasMongoUri(
+  uri: string,
+  databaseName: string
+): void {
+  const allowedHosts = new Set([
+    'cluster0.6rsrqdq.mongodb.net',
+    'ac-ovxrfpd-shard-00-00.6rsrqdq.mongodb.net',
+    'ac-ovxrfpd-shard-00-01.6rsrqdq.mongodb.net',
+    'ac-ovxrfpd-shard-00-02.6rsrqdq.mongodb.net',
+  ]);
+
+  if (databaseName !== 'booknook') {
+    throw new Error('Atlas seed is restricted to the booknook database');
   }
 
-  const { env } = await import('../src/config/env.js');
-  assertLoopbackMongoUri(env.MONGODB_URI);
+  const isSrv = uri.startsWith('mongodb+srv://');
+  const isStandard = uri.startsWith('mongodb://');
+
+  if (!isSrv && !isStandard) {
+    throw new Error('Atlas seed requires a valid MongoDB URI');
+  }
+
+  const remainder = uri.slice(isSrv ? 14 : 10);
+  const authority = remainder.split('/')[0]?.split('?')[0] ?? '';
+  const databasePath = remainder.includes('/')
+    ? remainder.split('/')[1]?.split('?')[0] ?? ''
+    : '';
+
+  if (databasePath && databasePath !== 'booknook') {
+    throw new Error('Atlas seed is restricted to the booknook database');
+  }
+
+  const hostList = authority
+    .slice(authority.lastIndexOf('@') + 1)
+    .split(',');
+
+  const hosts = hostList.map((entry) => {
+    const parts = entry.split(':');
+    return {
+      hostname: parts[0]?.toLowerCase(),
+      port: parts[1],
+      validParts: parts.length <= 2,
+    };
+  });
+
+  if (
+    hosts.length === 0 ||
+    hosts.some(
+      ({ hostname, port, validParts }) =>
+        !validParts ||
+        !hostname ||
+        !allowedHosts.has(hostname) ||
+        (isSrv && port !== undefined) ||
+        (isStandard && port !== '27017')
+    ) ||
+    (isSrv &&
+      (hosts.length !== 1 ||
+        hosts[0]?.hostname !== 'cluster0.6rsrqdq.mongodb.net')) ||
+    (isStandard && hosts.length !== 3)
+  ) {
+    throw new Error('Atlas seed is restricted to the approved Atlas cluster');
+  }
+}
+
+async function applySeed(books: SeedBook[]): Promise<void> {
+  const confirmation = process.env.BOOKNOOK_SEED_CONFIRM;
+
+  const { env } = await import("../src/config/env.js");
+
+  if (confirmation === "local-database-write") {
+    assertLoopbackMongoUri(env.MONGODB_URI);
+  } else if (confirmation === "atlas-booknook-write") {
+    assertAtlasMongoUri(env.MONGODB_URI, env.DB_NAME);
+  } else {
+    throw new Error(
+      "Set BOOKNOOK_SEED_CONFIRM to local-database-write or atlas-booknook-write"
+    );
+  }
 
   const [
     { connectDatabase, closeDatabase },
     { getCollections },
     { createDatabaseIndexes },
   ] = await Promise.all([
-    import('../src/config/database.js'),
-    import('../src/config/collections.js'),
-    import('../src/config/database-indexes.js'),
+    import("../src/config/database.js"),
+    import("../src/config/collections.js"),
+    import("../src/config/database-indexes.js"),
   ]);
 
   await connectDatabase();
   try {
     await createDatabaseIndexes();
+
     const result = await getCollections().books.bulkWrite(
       createOpenLibraryUpsertOperations(books),
       { ordered: false }
     );
+
     console.log(
       JSON.stringify(
         {
-          mode: 'apply',
+          mode: "apply",
+          database: env.DB_NAME,
           attempted: books.length,
           inserted: result.upsertedCount,
           alreadyPresent: result.matchedCount,
