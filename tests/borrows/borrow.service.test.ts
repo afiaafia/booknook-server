@@ -227,4 +227,66 @@ describe('borrow service', () => {
     assert.equal(calls.markReturned, 0);
     assert.equal(calls.increment, 0);
   });
+
+  it('rejects borrowing when the book does not exist', async () => {
+    const { calls, dependencies } = makeDependencies({
+      bookRepository: { findById: async () => null },
+    });
+    const service = createBorrowService(dependencies as never);
+
+    await assert.rejects(service.borrowBook(request, reader), {
+      code: 'BOOK_NOT_FOUND',
+    });
+    assert.equal(calls.decrement, 0);
+    assert.equal(calls.create, 0);
+  });
+
+  it('rejects returning a borrow that has already been returned', async () => {
+    const { calls, dependencies } = makeDependencies({
+      borrowRepository: {
+        findById: async () =>
+          ({
+            _id: new ObjectId(borrowId),
+            bookId: new ObjectId(bookId),
+            userId: reader.id,
+            status: 'returned',
+          }) as Borrow,
+      },
+    });
+    const service = createBorrowService(dependencies as never);
+
+    await assert.rejects(service.returnBook(borrowId, reader.id), {
+      code: 'ALREADY_RETURNED',
+    });
+    assert.equal(calls.markReturned, 0);
+    assert.equal(calls.increment, 0);
+  });
+
+  it('restores the borrow record when inventory restoration fails during return', async () => {
+    let restorationAttempts = 0;
+
+    const { calls, dependencies } = makeDependencies({
+      getMongoClient: () => ({
+        startSession: () =>
+          makeSession(async () => {
+            throw unsupportedTransactionError;
+          }),
+      }),
+      bookRepository: {
+        incrementAvailableCopies: async () => {
+          restorationAttempts += 1;
+          return { modifiedCount: 0 };
+        },
+      },
+    });
+    const service = createBorrowService(dependencies as never);
+
+    await assert.rejects(service.returnBook(borrowId, reader.id), {
+      code: 'COPY_RESTORATION_FAILED',
+    });
+
+    assert.equal(restorationAttempts, 1);
+    assert.equal(calls.markReturned, 1);
+    assert.equal(calls.markActive, 1);
+  });
 });
