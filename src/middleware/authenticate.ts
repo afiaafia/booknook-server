@@ -86,7 +86,13 @@ export function createAuthenticate(
         res.locals.authUser = await verifyToken(token);
         next();
       } catch (error) {
-        req.log?.warn({ err: error }, 'Bearer token validation failed');
+        req.log?.error(
+            {
+              code: error instanceof Error ? (error as Error & { code?: string }).code : undefined,
+              message: error instanceof Error ? error.message : String(error),
+            },
+            'Bearer token validation failed'
+          );
         res.status(401).json({
           success: false,
           message: 'Invalid or expired access token',
