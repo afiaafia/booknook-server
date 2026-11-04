@@ -41,6 +41,12 @@ const categoryWorks = {
     authors: [{ name: 'Kids Author' }],
     subject: ['juvenile fiction', 'children'],
   }],
+  romance: [{
+    key: '/works/OL105W',
+    title: 'The Romance Book',
+    authors: [{ name: 'Romance Author' }],
+    subject: ['romance', 'love stories'],
+  }],
 };
 
 describe('Open Library seed mapping', () => {
@@ -183,10 +189,11 @@ describe('Open Library seed mapping', () => {
       'fiction',
       'history',
       'juvenile_fiction',
+      'romance',
       'science',
     ]);
 
-    assert.equal(books.length, 4);
+    assert.equal(books.length, 5);
 
     const categories = new Map(
       books.map((book) => [book.openLibraryKey, book.category])
@@ -196,6 +203,7 @@ describe('Open Library seed mapping', () => {
     assert.equal(categories.get('/works/OL102W'), 'Science');
     assert.equal(categories.get('/works/OL103W'), 'History');
     assert.equal(categories.get('/works/OL104W'), 'Kids');
+    assert.equal(categories.get('/works/OL105W'), 'Romance');
   });
 
   it('deduplicates the same Open Library work across subject endpoints', async () => {
@@ -241,7 +249,7 @@ describe('Open Library seed mapping', () => {
       },
     });
 
-    assert.equal(books.length, 4);
+    assert.equal(books.length, 5);
     assert.equal(calls.get('science.json'), 2);
     assert.deepEqual(delays, [125]);
   });
