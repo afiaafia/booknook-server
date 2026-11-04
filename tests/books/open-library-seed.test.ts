@@ -137,7 +137,7 @@ describe('Open Library seed mapping', () => {
 
     assert.equal(
       requestUrl,
-      'https://openlibrary.org/search.json?q=fiction&limit=25&fields=key%2Ctitle%2Cauthor_name%2Ccover_i%2Cfirst_publish_year'
+      'https://openlibrary.org/search.json?q=fiction&limit=25&fields=key%2Ctitle%2Cauthor_name%2Ccover_i%2Cfirst_publish_year%2Csubject'
     );
     assert.equal(requestHeaders?.get('Accept'), 'application/json');
     assert.equal(

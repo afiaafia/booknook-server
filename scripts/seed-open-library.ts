@@ -260,7 +260,7 @@ export async function fetchOpenLibraryBooks(
   searchUrl.searchParams.set('limit', String(RESULT_LIMIT));
   searchUrl.searchParams.set(
     'fields',
-    'key,title,author_name,cover_i,first_publish_year'
+    'key,title,author_name,cover_i,first_publish_year,subject'
   );
 
   try {
