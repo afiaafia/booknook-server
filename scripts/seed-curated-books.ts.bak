@@ -1,0 +1,404 @@
+import type { Book } from '../src/modules/books/book.types.js';
+import {
+  assertAtlasMongoUri,
+  assertLoopbackMongoUri,
+} from './seed-open-library.js';
+
+const CATALOG_USER = {
+  userId: 'system:openlibrary',
+  name: 'Open Library Catalog',
+  email: 'catalog@booknook.invalid',
+};
+
+type Category =
+  | 'Fiction'
+  | 'Romance'
+  | 'Science'
+  | 'History'
+  | 'Kids'
+  | 'Others';
+
+type CuratedBook = {
+  title: string;
+  author: string;
+  category: Category;
+};
+
+type SearchDoc = {
+  key?: string;
+  title?: string;
+  author_name?: string[];
+  cover_i?: number;
+  first_publish_year?: number;
+  subject?: string[];
+};
+
+type SearchResponse = {
+  docs?: SearchDoc[];
+};
+
+type SeedBook = Omit<Book, '_id'>;
+
+const CURATED_BOOKS: CuratedBook[] = [
+  // Fiction
+  { title: 'The Alchemist', author: 'Paulo Coelho', category: 'Fiction' },
+  { title: 'The Kite Runner', author: 'Khaled Hosseini', category: 'Fiction' },
+  { title: 'A Thousand Splendid Suns', author: 'Khaled Hosseini', category: 'Fiction' },
+  { title: 'The Book Thief', author: 'Markus Zusak', category: 'Fiction' },
+  { title: 'The Da Vinci Code', author: 'Dan Brown', category: 'Fiction' },
+  { title: 'The Great Gatsby', author: 'F. Scott Fitzgerald', category: 'Fiction' },
+  { title: 'The Catcher in the Rye', author: 'J. D. Salinger', category: 'Fiction' },
+  { title: 'The Midnight Library', author: 'Matt Haig', category: 'Fiction' },
+  { title: 'The Lord of the Rings', author: 'J. R. R. Tolkien', category: 'Fiction' },
+  { title: 'The Hunger Games', author: 'Suzanne Collins', category: 'Fiction' },
+  { title: 'And Then There Were None', author: 'Agatha Christie', category: 'Fiction' },
+  { title: 'Murder on the Orient Express', author: 'Agatha Christie', category: 'Fiction' },
+  { title: 'The Girl with the Dragon Tattoo', author: 'Stieg Larsson', category: 'Fiction' },
+  { title: 'The Silent Patient', author: 'Alex Michaelides', category: 'Fiction' },
+  { title: 'Dune', author: 'Frank Herbert', category: 'Fiction' },
+
+  // Romance
+  { title: 'The Fault in Our Stars', author: 'John Green', category: 'Romance' },
+  { title: 'Before the Coffee Gets Cold', author: 'Toshikazu Kawaguchi', category: 'Romance' },
+
+  // Kids
+  { title: 'The Little Prince', author: 'Antoine de Saint-Exupery', category: 'Kids' },
+  { title: "Harry Potter and the Philosopher's Stone", author: 'J. K. Rowling', category: 'Kids' },
+  { title: 'The Hobbit', author: 'J. R. R. Tolkien', category: 'Kids' },
+  { title: 'The Maze Runner', author: 'James Dashner', category: 'Kids' },
+  { title: 'The Chronicles of Narnia', author: 'C. S. Lewis', category: 'Kids' },
+
+  // History
+  { title: "Man's Search for Meaning", author: 'Viktor E. Frankl', category: 'Others' },
+
+  // Others: self-development, finance, business, productivity, lifestyle
+  { title: 'Atomic Habits', author: 'James Clear', category: 'Others' },
+  { title: 'The 7 Habits of Highly Effective People', author: 'Stephen R. Covey', category: 'Others' },
+  { title: 'How to Win Friends and Influence People', author: 'Dale Carnegie', category: 'Others' },
+  { title: 'The Power of Now', author: 'Eckhart Tolle', category: 'Others' },
+  { title: 'Think and Grow Rich', author: 'Napoleon Hill', category: 'Others' },
+  { title: 'The Subtle Art of Not Giving a F*ck', author: 'Mark Manson', category: 'Others' },
+  { title: "Can't Hurt Me", author: 'David Goggins', category: 'Others' },
+  { title: 'The 5 AM Club', author: 'Robin Sharma', category: 'Others' },
+  { title: 'Deep Work', author: 'Cal Newport', category: 'Others' },
+  { title: 'The Four Agreements', author: 'Don Miguel Ruiz', category: 'Others' },
+  { title: 'Rich Dad Poor Dad', author: 'Robert T. Kiyosaki', category: 'Others' },
+  { title: 'The Psychology of Money', author: 'Morgan Housel', category: 'Others' },
+  { title: 'The Intelligent Investor', author: 'Benjamin Graham', category: 'Others' },
+  { title: 'The Millionaire Next Door', author: 'Thomas J. Stanley', category: 'Others' },
+  { title: 'The Lean Startup', author: 'Eric Ries', category: 'Others' },
+  { title: 'Zero to One', author: 'Peter Thiel', category: 'Others' },
+  { title: 'Start with Why', author: 'Simon Sinek', category: 'Others' },
+  { title: 'The 4-Hour Workweek', author: 'Timothy Ferriss', category: 'Others' },
+  { title: 'Good to Great', author: 'Jim Collins', category: 'Others' },
+  { title: 'The Richest Man in Babylon', author: 'George S. Clason', category: 'Others' },
+  { title: 'Ikigai', author: 'Hector Garcia', category: 'Others' },
+  { title: 'The Courage to Be Disliked', author: 'Ichiro Kishimi', category: 'Others' },
+  { title: 'The Mountain Is You', author: 'Brianna Wiest', category: 'Others' },
+  { title: 'The Secret', author: 'Rhonda Byrne', category: 'Others' },
+  { title: 'The Power of Habit', author: 'Charles Duhigg', category: 'Others' },
+  { title: 'Tuesdays with Morrie', author: 'Mitch Albom', category: 'Others' },
+  { title: 'The 48 Laws of Power', author: 'Robert Greene', category: 'Others' },
+];
+
+function normalize(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function authorMatches(expected: string, actual: string[]): boolean {
+  const expectedLastName = normalize(expected.split(/\s+/).at(-1) ?? '');
+  return actual.some((author) =>
+    normalize(author).includes(expectedLastName)
+  );
+}
+
+async function searchOpenLibrary(
+  title: string,
+  author?: string
+): Promise<SearchDoc[]> {
+  const url = new URL('https://openlibrary.org/search.json');
+  url.searchParams.set('title', title);
+  if (author) url.searchParams.set('author', author);
+  url.searchParams.set('limit', '30');
+  url.searchParams.set(
+    'fields',
+    'key,title,author_name,cover_i,first_publish_year,subject'
+  );
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'BookNook/1.0 (curated catalogue import)',
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Open Library returned HTTP ${response.status} for "${title}"`);
+  }
+
+  const payload = (await response.json()) as SearchResponse;
+  return Array.isArray(payload.docs) ? payload.docs : [];
+}
+
+function cleanAuthor(value: string): string {
+  return value
+    .replace(/\s*\(Author\)\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function resolveBook(book: CuratedBook): Promise<SeedBook | null> {
+  // First try title + author. If Open Library's author index is inconsistent,
+  // retry by title and independently verify the returned author.
+  const primary = await searchOpenLibrary(book.title, book.author);
+  const fallback = primary.some((doc) =>
+    typeof doc.key === 'string' &&
+    /^\/works\/OL\d+W$/.test(doc.key) &&
+    typeof doc.title === 'string' &&
+    normalize(doc.title) === normalize(book.title) &&
+    Array.isArray(doc.author_name) &&
+    doc.author_name.some((name) => authorMatches(book.author, [name]))
+  )
+    ? []
+    : await searchOpenLibrary(book.title);
+
+  const docs = [...primary, ...fallback];
+  const seen = new Set<string>();
+
+  const match = docs.find((doc) => {
+    if (
+      typeof doc.key !== 'string' ||
+      !/^\/works\/OL\d+W$/.test(doc.key) ||
+      typeof doc.title !== 'string' ||
+      normalize(doc.title) !== normalize(book.title) ||
+      !Array.isArray(doc.author_name) ||
+      !authorMatches(book.author, doc.author_name)
+    ) {
+      return false;
+    }
+
+    if (seen.has(doc.key)) return false;
+    seen.add(doc.key);
+    return true;
+  });
+
+  if (!match || !match.cover_i || match.cover_i <= 0) {
+    console.log(`\\nDiagnostics for: ${book.title}`);
+    console.log(JSON.stringify(
+      docs.slice(0, 8).map((doc) => ({
+        title: doc.title,
+        authors: doc.author_name,
+        key: doc.key,
+        cover_i: doc.cover_i,
+        exactTitle: typeof doc.title === 'string'
+          ? normalize(doc.title) === normalize(book.title)
+          : false,
+        authorMatch: Array.isArray(doc.author_name)
+          ? authorMatches(book.author, doc.author_name)
+          : false,
+      })),
+      null,
+      2
+    ));
+    return null;
+  }
+
+  const authors = (match.author_name ?? [])
+    .map(cleanAuthor)
+    .filter(Boolean);
+  const author = authors.find((name) =>
+    authorMatches(book.author, [name])
+  );
+
+  if (!author) return null;
+
+  const subjects = (match.subject ?? []).slice(0, 5);
+  const year = match.first_publish_year;
+
+  return {
+    title: match.title!,
+    author,
+    category: book.category,
+    image: `https://covers.openlibrary.org/b/id/${match.cover_i}-M.jpg`,
+    openLibraryKey: match.key!,
+    description: [
+      year ? `First published in ${year}.` : '',
+      subjects.length ? `Subjects: ${subjects.join(', ')}.` : '',
+      `Curated BookNook selection in ${book.category}.`,
+    ].filter(Boolean).join(' '),
+    totalCopies: 2,
+    availableCopies: 2,
+    addedBy: CATALOG_USER,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+async function resolveAllBooks() {
+  const resolved: SeedBook[] = [];
+  const skipped: string[] = [];
+  const seenKeys = new Set<string>();
+  const seenTitles = new Set<string>();
+
+  for (const item of CURATED_BOOKS) {
+    try {
+      const book = await resolveBook(item);
+
+      if (!book) {
+        skipped.push(`${item.title} — no exact title/author match with cover`);
+        continue;
+      }
+
+      const key = book.openLibraryKey!;
+      const title = normalize(book.title);
+
+      if (seenKeys.has(key) || seenTitles.has(title)) {
+        skipped.push(`${item.title} — duplicate`);
+        continue;
+      }
+
+      seenKeys.add(key);
+      seenTitles.add(title);
+      resolved.push(book);
+
+      console.log(`Matched: ${book.title} — ${book.author} [${book.category}]`);
+    } catch (error) {
+      skipped.push(
+        `${item.title} — ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return { resolved, skipped };
+}
+
+async function main() {
+  const apply = process.argv.includes('--apply');
+  const invalidArgs = process.argv.slice(2).some(
+    (arg) => arg !== '--apply' && arg !== '--dry-run'
+  );
+
+  if (invalidArgs) {
+    throw new Error('Use only --dry-run or --apply.');
+  }
+
+  if (CURATED_BOOKS.length !== 50) {
+    throw new Error(`Expected 50 curated entries, found ${CURATED_BOOKS.length}.`);
+  }
+
+  const { resolved, skipped } = await resolveAllBooks();
+
+  const categoryCounts = Object.fromEntries(
+    ['Fiction', 'Romance', 'Science', 'History', 'Kids', 'Others'].map(
+      (category) => [
+        category,
+        resolved.filter((book) => book.category === category).length,
+      ]
+    )
+  );
+
+  if (!apply) {
+    console.log(JSON.stringify({
+      mode: 'dry-run',
+      requested: CURATED_BOOKS.length,
+      matched: resolved.length,
+      skipped,
+      categoryCounts,
+      preview: resolved.map(({ title, author, category, openLibraryKey, image }) => ({
+        title, author, category, openLibraryKey, image,
+      })),
+      databaseConnected: false,
+    }, null, 2));
+    return;
+  }
+
+  const confirmation = process.env.BOOKNOOK_SEED_CONFIRM;
+  const { env } = await import('../src/config/env.js');
+
+  if (confirmation === 'local-database-write') {
+    assertLoopbackMongoUri(env.MONGODB_URI);
+  } else if (confirmation === 'atlas-booknook-write') {
+    assertAtlasMongoUri(env.MONGODB_URI, env.DB_NAME);
+  } else {
+    throw new Error(
+      'Set BOOKNOOK_SEED_CONFIRM to local-database-write or atlas-booknook-write.'
+    );
+  }
+
+  if (resolved.length === 0) {
+    throw new Error('No verified books are available to insert.');
+  }
+
+  const [
+    { connectDatabase, closeDatabase },
+    { getCollections },
+    { createDatabaseIndexes },
+  ] = await Promise.all([
+    import('../src/config/database.js'),
+    import('../src/config/collections.js'),
+    import('../src/config/database-indexes.js'),
+  ]);
+
+  await connectDatabase();
+
+  try {
+    await createDatabaseIndexes();
+
+    const collection = getCollections().books;
+    const existing = await collection.find(
+      {},
+      { projection: { title: 1, openLibraryKey: 1 } }
+    ).toArray();
+
+    const existingTitles = new Set(
+      existing.map((item) =>
+        typeof item.title === 'string' ? normalize(item.title) : ''
+      )
+    );
+    const existingKeys = new Set(
+      existing.map((item) => item.openLibraryKey).filter(Boolean)
+    );
+
+    const newBooks = resolved.filter((book) =>
+      !existingTitles.has(normalize(book.title)) &&
+      !existingKeys.has(book.openLibraryKey)
+    );
+
+    if (newBooks.length === 0) {
+      console.log('No new books to insert. Existing catalogue records were preserved.');
+      return;
+    }
+
+    const operations = newBooks.map((book) => ({
+      updateOne: {
+        filter: { openLibraryKey: book.openLibraryKey },
+        update: { $setOnInsert: book },
+        upsert: true,
+      },
+    }));
+
+    const result = await collection.bulkWrite(operations, { ordered: true });
+
+    console.log(JSON.stringify({
+      mode: 'apply',
+      database: env.DB_NAME,
+      verified: resolved.length,
+      inserted: result.upsertedCount,
+      alreadyPresent: newBooks.length - result.upsertedCount,
+      skipped,
+      categoryCounts,
+    }, null, 2));
+  } finally {
+    await closeDatabase();
+  }
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+});
